@@ -1,0 +1,85 @@
+pragma solidity ^0.8.0;
+
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeMath} from "@openzeppelin/contracts/utils/math/SafeMath.sol";
+import {IUniswapRouter} from "./IUniswapRouter.sol";
+import {FlashLoanReceiverBase} from "./FlashLoanReceiverBase.sol";
+import {IDyDx} from "./IDyDx.sol";
+
+contract FlashloanArbitrage is FlashLoanReceiverBase {
+    using SafeMath for uint256;
+
+    address public constant UNISWAP_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+    address public constant SUSHISWAP_ROUTER = 0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
+
+    constructor(address _dydx) FlashLoanReceiverBase(_dydx) {}
+
+    function startArbitrage() external {
+        address weth = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2; // WETH token address
+        address shib = 0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE; // SHIB token address
+        uint256 amount = 1000 ether; // Amount of WETH to borrow
+
+        // Step 1: Initiate the flashloan from dYdX
+        initiateFlashLoan(weth, amount);
+
+        // Step 2: Perform the arbitrage strategy (Uniswap: WETH to SHIB)
+        uint256 loanAmount = amount.add(amount.mul(2)); // Include fees
+        uint256 shibAmount = performUniswapArbitrage(weth, shib, loanAmount);
+
+        // Step 3: Perform the arbitrage strategy (Sushiswap: SHIB to WETH)
+        uint256 ethAmount = performSushiswapArbitrage(shib, weth, shibAmount);
+
+        // Step 4: Repay the flashloan to dYdX
+        transferFundsBackToDyDx(weth, loanAmount);
+
+        // Step 5: Calculate and handle the profit
+        uint256 profit = ethAmount.sub(loanAmount);
+        uint256 targetProfit = loanAmount.mul(1).div(100); // 1% profit
+        require(profit >= targetProfit, "Profit not reached");
+        handleProfit(profit);
+    }
+
+    function performUniswapArbitrage(
+        address _token1,
+        address _token2,
+        uint256 _amount
+    ) internal returns (uint256) {
+        // Step 1: Get the token addresses and amounts for the arbitrage
+        address[] memory path = new address[](2);
+        path[0] = _token1;
+        path[1] = _token2;
+
+        // Step 2: Perform the swap on Uniswap
+        uint256[] memory amounts = IUniswapRouter(UNISWAP_ROUTER).swapExactTokensForTokens(
+            _amount,
+            0,
+            path,
+            address(this),
+            block.timestamp + 1
+        );
+
+        return amounts[1];
+    }
+
+    function performSushiswapArbitrage(
+        address _token1,
+        address _token2,
+        uint256 _amount
+    ) internal returns (uint256) {
+        // Step 1: Get the token addresses and amounts for the arbitrage
+        address[] memory path = new address[](2);
+        path[0] = _token1;
+        path[1] = _token2;
+
+        // Step 2: Perform the swap on Sushiswap
+        uint256[] memory amounts = IUniswapRouter(SUSHISWAP_ROUTER).swapExactTokensForTokens(
+            _amount,
+            0,
+            path,
+            address(this),
+            block.timestamp + 1
+        );
+
+        return amounts[1];
+    }
+}
